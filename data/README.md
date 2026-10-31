@@ -1,6 +1,9 @@
 # Data access
-Raw OHLC, security-level membership histories, feature/target panels and both prediction files are deliberately withheld. Their public redistribution rights were not established. Git history from the private workspace is not imported.
 
-The public release contains author-generated aggregate statistics, figure-source values, schemas, hashes, code, and access instructions. It cannot reconstruct security-level market records. The 20-sheet supplement was reviewed separately from raw inputs.
+All ten exact original Parquet datasets were recovered and validated locally on 1 November 2026. Their status remains `WITHHELD_RIGHTS_UNESTABLISHED`: **none is downloadable from this repository**. The separate recovered evidence root preserves the original research layout outside the public repository.
 
-To reproduce from original observations, obtain provider/source permissions and the exact private files identified in `audit/data_inventory.csv` and the historical release manifest. A new provider download may have revisions, delistings, changed symbols or corporate actions and is not an exact substitute. Do not manufacture historical membership from a terminal roster. No synthetic dataset is represented as empirical evidence.
+See the [recovery report](../audit/DATA_RECOVERY_REPORT.md), [per-file recovery manifest](../audit/data_recovery_manifest.csv), [rights requirements](../audit/data_recovery_rights.csv) and [executed validation summary](../audit/DATA_RECOVERY_VALIDATION.json). Portable source/destination root labels resolve through the local private receipt.
+
+Raw OHLC, membership, observations/features, fold calendar and predictions remain local pending appropriate clearance. Withholding records missing authorization evidence, not a finding that all redistribution is prohibited. The fold calendar is separately assessed as experiment metadata. Software/retrieval-library licenses do not establish upstream data rights.
+
+Public files contain aggregate statistics, figure-source values, schemas, hashes, code and audit metadata. Original observation-level reproduction requires lawful access and suitable permissions for the exact files in the unchanged [original inventory](../audit/data_inventory.csv) and analytical release manifest. A revised provider download is not an exact substitute. Do not manufacture historical membership from terminal rosters or represent synthetic data as empirical evidence.

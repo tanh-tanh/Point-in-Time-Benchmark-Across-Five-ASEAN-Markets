@@ -22,8 +22,18 @@ The new audit independently recalculated all collapsed-prediction Brier/log-loss
 
 ## Independent audit drivers
 With lawfully held complete private evidence, the new audit can be rerun without changing it:
-`sh
+```sh
 python scripts/verify_private_predictions.py --evidence-root PRIVATE_EVIDENCE_ROOT --output reproduced/private_audit
 python scripts/retrain_sample.py --evidence-root PRIVATE_EVIDENCE_ROOT --output reproduced/private_audit
-`
+```
 Replace PRIVATE_EVIDENCE_ROOT with the genuine evidence directory containing research_data and the original script layout. These commands require restricted inputs and are not public-clone tests.
+
+## Recovered original evidence — 1 November 2026
+
+The local RECOVERED_EVIDENCE_ROOT (`PIT_DATA_RECOVERY_20261101/evidence`) now contains all ten exact datasets, original scripts and available dependencies in the required layout. Pass it directly to the audit drivers above. It is not included in a public clone.
+
+Both original commands executed successfully. [The new receipt](../audit/DATA_RECOVERY_VALIDATION.json) records metric/bootstrap PASS and 300 first-valid-fold refits across five markets, three arms, four models and five seeds: 190,800 probabilities, maximum absolute error 3.8230529852967276e-13, original tolerance 1e-10. All ten structural profiles match the original inventory/schema. This is bounded reproduction, not every-fold retraining or complete raw-acquisition reconstruction.
+
+There are 396 exact raw-source references recovered and [51 missing daily caches](../audit/unrecovered_raw_source_dependencies.csv). Two historical V6 tests remain absent; the broad suite was not rerun here. A separate virtual environment reused compatible installed packages and the existing PyArrow target. Recorded pandas/SciPy versions differ from the historical lock; the numerical checks passed in that recorded runtime.
+
+Public observation-level reproduction remains limited by rights and absent upstream dependencies. The [recovery report](../audit/DATA_RECOVERY_REPORT.md) distinguishes local evidence, executed PASS checks, incomplete upstream reconstruction and public withholding.

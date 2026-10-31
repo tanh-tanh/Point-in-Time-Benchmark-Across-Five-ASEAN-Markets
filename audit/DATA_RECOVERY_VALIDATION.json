@@ -1,0 +1,67 @@
+{
+  "date": "2026-11-01",
+  "recovery_status": "EXACT_RECOVERY",
+  "datasets": 10,
+  "dataset_bytes": 93044183,
+  "checksum_mismatches": 0,
+  "structural_checks": "PASS",
+  "analytical_release_files": 195,
+  "evidence_files": 1586,
+  "evidence_bytes": 431215982,
+  "source_and_recovery_preservation": "PASS",
+  "raw_source_references": {
+    "EXACT_RECOVERY": 396,
+    "NOT_FOUND": 51
+  },
+  "original_verification": "PASS",
+  "metric_comparisons": 12,
+  "metric_max_abs_error": 5.551115123125784e-16,
+  "bootstrap_rows": 76,
+  "bootstrap_max_abs_error": 1.1102230246251563e-16,
+  "bounded_retraining": "PASS",
+  "refits": 300,
+  "refit_predictions": 190800,
+  "prediction_max_abs_error": 3.8230529852967276e-13,
+  "prediction_tolerance": 1e-10,
+  "index_ids": [
+    "FBM_KLCI",
+    "IDX30",
+    "PSEI",
+    "SET50",
+    "VN30"
+  ],
+  "arms": [
+    "CURRENT_2026_APPLIED_BACKWARD",
+    "PIT_CURRENT_INTERSECTION_CONTROL",
+    "POINT_IN_TIME"
+  ],
+  "models": [
+    "historical_class_probability",
+    "lightgbm",
+    "logistic_regression",
+    "random_forest"
+  ],
+  "seeds": [
+    11,
+    23,
+    37,
+    53,
+    71
+  ],
+  "first_valid_folds": {
+    "FBM_KLCI": "FOLD7-da4085c7b2718476",
+    "IDX30": "FOLD7-54afc6ac8aed1f18",
+    "PSEI": "FOLD7-43a0c76bcbf417a4",
+    "SET50": "FOLD7-d23db037c162088b",
+    "VN30": "FOLD7-342aa278c888a5cf"
+  },
+  "prior_release_comparison": "PASS",
+  "end_to_end_reconstruction": "PARTIAL",
+  "public_redistribution": "WITHHELD_RIGHTS_UNESTABLISHED",
+  "published_datasets": 0,
+  "python": "3.13.5",
+  "driver_sha256": {
+    "verify_private_predictions.py": "50bf96211000138a2fc2c05aec0d7b581d2f794f62dc18b24cf7fef05edcaba5",
+    "retrain_sample.py": "4aaee2b7cc9a21926463c1c39d2de6c8f3626073e5ab6580e306a39d90448ed8"
+  }
+}

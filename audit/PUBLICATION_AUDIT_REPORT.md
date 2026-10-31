@@ -1,3 +1,5 @@
+> Latest update: [1 November 2026 original-data recovery](DATA_RECOVERY_REPORT.md). All ten primary files are exact local recoveries; none has newly established public redistribution rights. The 26 October report below remains the historical record.
+
 # Publication audit — 26 October 2026
 ## A. Artifact inventory and authority
 Selected manuscript: **Do Current-Constituent Universes Distort Equity Forecasting Evidence? A Point-in-Time Benchmark Across Five ASEAN Markets**, dated 3 August 2026, under `paper_outputs/five_market_pit_universe_benchmark_v8_1_1/manuscript/`. Authority is established by exact title/content, configuration identity, original annotated analytical tag `pit-five-market-v8.1.1-final`, commit `8777babb77b0666604923d35d3f490462a040fd6`, source mapping and checksums. V7 is partial; V8 adds Malaysia; V8.1 hardens inference; V8.1.1 corrects macro-scope/calibration labels without changing predictions. No artifacts from the P2/P3/P4 closeout or other empirical studies are substituted.
@@ -34,3 +36,13 @@ Published content commit: 1d3e8be74adddf39eb40a02d6342430754d3d1df. Branch: main
 
 ## H. Outstanding issues
 The exact remaining scientific/reproduction limits are listed in `docs/LIMITATIONS.md`: record-level rights, omitted archive dependencies, two absent V6 tests, absent 2017 anchor PDF/Tier 3 2018 evidence, unrecovered 5014 member-days, insufficient five-market block-40 support, calibration ineligibility, next-observed-session/raw-price semantics, incomplete all-fold retraining, and unauthenticated prospective preregistration. A public reuse license remains pending. They do not prevent publication of the explicitly bounded aggregate/code subset, and none is relabeled as resolved by package QA.
+
+## I. Original-data recovery addendum — 1 November 2026
+
+All ten primary datasets are EXACT_RECOVERY against the unchanged original inventory: 93,044,183 bytes, zero hash/size mismatches. The isolated root contains 1,586 original/supporting files (431,215,982 bytes), including all 195 analytical manifest records. Sources/recovered files remain byte-identical after execution.
+
+The two requested original drivers executed and passed their checks. All 300 bounded refits and 190,800 probabilities match within 1e-10; maximum error is 3.8230529852967276e-13, rather than exact prediction equality. New receipts use separate filenames and preserve the previous audit records.
+
+The [manifest](data_recovery_manifest.csv), [structure](data_recovery_structure.json), [validation summary](DATA_RECOVERY_VALIDATION.json), [rights register](data_recovery_rights.csv) and [report](DATA_RECOVERY_REPORT.md) distinguish local recovery from public data. All ten retain WITHHELD_RIGHTS_UNESTABLISHED. The fold calendar is separately classified as experiment metadata; source-term publication clearance remains unauthenticated. No legal prohibition, ownership or new public license is inferred.
+
+There are 51 unrecovered upstream daily caches (35 Yahoo, 16 VNstock); two V6 tests and the original Malaysian anchor document remain absent. No full historical-suite or full pipeline PASS is claimed. This update publishes only documentation, provenance metadata and aggregate validation receipts, preserving all dataset exclusions and PARTIAL_MATCH scope. The final ordinary fast-forward push and independent remote verification are bound by the external task receipt.
