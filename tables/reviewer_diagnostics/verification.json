@@ -1,0 +1,110 @@
+{
+  "scope": "PUBLIC_AGGREGATE_REVIEWER_DIAGNOSTICS",
+  "model_training": false,
+  "observation_level_inputs": false,
+  "outputs": [
+    "R1_coverage_by_market_arm.csv",
+    "R1_full_panel_rejections_by_reason.csv",
+    "R1_interval_detail_PSEI_FBM_KLCI.csv",
+    "R2_block40_decomposition.csv",
+    "R2_bootstrap_block_sensitivity.csv",
+    "R2_interval_scope_by_block.csv",
+    "R3_oos_forecasts_common_support.csv",
+    "SUMMARY.md"
+  ],
+  "checks": [
+    {
+      "check": "forecast_counts_identical_across_four_models",
+      "status": "PASS",
+      "detail": 84
+    },
+    {
+      "check": "oos_dates_identical_across_arms_within_interval",
+      "status": "PASS",
+      "detail": 28
+    },
+    {
+      "check": "constant_integer_daily_constituent_count",
+      "status": "PASS",
+      "detail": {
+        "FBM_KLCI": 30,
+        "IDX30": 30,
+        "PSEI": 30,
+        "SET50": 50,
+        "VN30": 30
+      }
+    },
+    {
+      "check": "interval_coverage_reproduced_pit_and_current",
+      "status": "PASS",
+      "detail": 4.440892098500626e-16
+    },
+    {
+      "check": "market_coverage_identical_across_models",
+      "status": "PASS",
+      "detail": 15
+    },
+    {
+      "check": "market_equal_weight_coverage_reproduced",
+      "status": "PASS",
+      "detail": 4.440892098500626e-16
+    },
+    {
+      "check": "bootstrap_point_estimates_reproduced_from_interval_brier",
+      "status": "PASS",
+      "detail": 1.209969624493823e-16
+    },
+    {
+      "check": "confirmatory_family_is_four_five_market_block20",
+      "status": "PASS",
+      "detail": 4
+    },
+    {
+      "check": "block40_available_macro_has_four_markets",
+      "status": "PASS",
+      "detail": 8
+    },
+    {
+      "check": "bh_adjusted_p_reproduced_within_each_macro_family",
+      "status": "PASS",
+      "detail": null
+    },
+    {
+      "check": "common_support_identical_across_models",
+      "status": "PASS",
+      "detail": {
+        "FBM_KLCI": 47379,
+        "IDX30": 2330,
+        "PSEI": 19439,
+        "SET50": 11520,
+        "VN30": 5280
+      }
+    },
+    {
+      "check": "oos_dates_match_market_inventory",
+      "status": "PASS",
+      "detail": [
+        79,
+        240,
+        180,
+        900,
+        1900
+      ]
+    },
+    {
+      "check": "arm_forecast_totals_match_table_04",
+      "status": "PASS",
+      "detail": {
+        "POINT_IN_TIME": 102763,
+        "CURRENT_2026_APPLIED_BACKWARD": 96088,
+        "PIT_CURRENT_INTERSECTION_CONTROL": 85948
+      }
+    },
+    {
+      "check": "common_support_total_matches_table_06",
+      "status": "PASS",
+      "detail": 85948
+    }
+  ],
+  "status": "PASS"
+}
