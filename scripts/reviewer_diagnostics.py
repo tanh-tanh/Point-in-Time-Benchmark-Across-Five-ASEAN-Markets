@@ -140,13 +140,16 @@ def constituents_per_date(
     interval_inventory: pd.DataFrame,
     checks: list[dict],
 ) -> pd.DataFrame:
-    """Daily denominators of prediction coverage for PIT and current arms.
+    """Daily denominators of prediction coverage for all three arms.
 
+    PIT membership is constant within an interval, so every arm's daily
+    constituent count is constant within an interval:
     PIT: active member-days / trading dates of each ready interval (S04).
     Current: the 2026 roster is applied to every PIT date, so the denominator
     is the roster size, recovered as the largest forecasts-per-date ratio.
-    Both are accepted only if they reproduce every reported interval coverage.
-    The intersection denominator varies by date and is not public.
+    Intersection: forecasts / reported coverage / OOS dates.
+    Each is accepted only if it is an integer and reproduces every reported
+    interval coverage.
     """
     inventory = interval_inventory.copy()
     inventory["pit_members_per_date"] = (
@@ -162,17 +165,19 @@ def constituents_per_date(
     )
     current["constituents_per_date"] = current.index_id.map(roster).astype(float)
     intersection = interval_arms[interval_arms.universe_semantics.eq(INTERSECTION)].copy()
-    intersection["constituents_per_date"] = np.nan
+    intersection["constituents_per_date"] = (
+        intersection.forecasts / intersection.reported_coverage / intersection.oos_dates
+    )
     out = pd.concat([pit.drop(columns="pit_members_per_date"), current, intersection], ignore_index=True)
-    known = out.constituents_per_date.notna()
     integer = bool(
-        np.allclose(out.loc[known, "constituents_per_date"], out.loc[known, "constituents_per_date"].round())
+        np.allclose(out.constituents_per_date, out.constituents_per_date.round(), rtol=0, atol=1e-9)
     )
     _check(checks, "constant_integer_daily_constituent_count", integer, roster.to_dict())
+    out["constituents_per_date"] = out.constituents_per_date.round()
     out["opportunities"] = out.oos_dates * out.constituents_per_date
     out["recomputed_coverage"] = out.forecasts / out.opportunities
-    error = float((out.loc[known, "recomputed_coverage"] - out.loc[known, "reported_coverage"]).abs().max())
-    _check(checks, "interval_coverage_reproduced_pit_and_current", error <= TOLERANCE, error)
+    error = float((out.recomputed_coverage - out.reported_coverage).abs().max())
+    _check(checks, "interval_coverage_reproduced_all_arms", error <= TOLERANCE, error)
     out["not_forecast"] = out.opportunities - out.forecasts
     return out
 
@@ -194,10 +199,9 @@ def build_r1_coverage(
         int(len(reported)),
     )
     for (index_id, arm), group in interval_rows.groupby(["index_id", "universe_semantics"]):
-        derivable = group.constituents_per_date.notna().all()
-        equal_weight = float(group.recomputed_coverage.mean()) if derivable else np.nan
+        equal_weight = float(group.recomputed_coverage.mean())
         reported_cov = float(reported.loc[(index_id, arm), "min"])
-        opportunities = float(group.opportunities.sum()) if derivable else np.nan
+        opportunities = float(group.opportunities.sum())
         forecasts = int(group.forecasts.sum())
         per_date = group.constituents_per_date.unique()
         rows.append(
@@ -208,32 +212,29 @@ def build_r1_coverage(
                 "arm": ARM_LABEL[arm],
                 "ready_intervals": int(group.interval_id.nunique()),
                 "oos_dates": int(group.oos_dates.sum()),
-                "constituents_per_oos_date": (
-                    int(per_date[0]) if derivable and len(per_date) == 1 else np.nan
+                "constituents_per_oos_date": int(per_date[0]) if len(per_date) == 1 else np.nan,
+                "constituents_per_oos_date_range": (
+                    f"{int(per_date.min())}-{int(per_date.max())}" if len(per_date) > 1 else str(int(per_date[0]))
                 ),
                 "forecast_opportunities": opportunities,
                 "valid_forecasts_per_model": forecasts,
-                "not_forecast": opportunities - forecasts if derivable else np.nan,
-                "pooled_coverage": forecasts / opportunities if derivable else np.nan,
-                "not_forecast_share": 1 - forecasts / opportunities if derivable else np.nan,
+                "not_forecast": opportunities - forecasts,
+                "pooled_coverage": forecasts / opportunities,
+                "not_forecast_share": 1 - forecasts / opportunities,
                 "equal_weight_coverage_recomputed": equal_weight,
                 "equal_weight_coverage_reported": reported_cov,
                 "opportunity_basis": (
-                    "OOS dates x constant daily constituent count; reproduces reported coverage"
-                    if derivable
-                    else "Date-varying intersection denominator; requires private_coverage_audit.py"
+                    "Sum over intervals of OOS forecast dates x constant daily constituent count; "
+                    "reproduces reported coverage. Excludes scheduled test dates with no forecast "
+                    "(one IDX30 date)."
                 ),
             }
         )
     out = pd.DataFrame(rows)
     for column in ["constituents_per_oos_date", "forecast_opportunities", "not_forecast"]:
         out[column] = out[column].round().astype("Int64")
-    derivable = out.equal_weight_coverage_recomputed.notna()
     error = float(
-        (
-            out.loc[derivable, "equal_weight_coverage_recomputed"]
-            - out.loc[derivable, "equal_weight_coverage_reported"]
-        ).abs().max()
+        (out.equal_weight_coverage_recomputed - out.equal_weight_coverage_reported).abs().max()
     )
     _check(checks, "market_equal_weight_coverage_reproduced", error <= TOLERANCE, error)
     return _order(out, arm=True)
@@ -298,16 +299,15 @@ def build_r1_interval_detail(
     wide = None
     for arm, prefix in [(PIT, "pit"), (CURRENT, "current"), (INTERSECTION, "intersection")]:
         part = oos[oos.universe_semantics.eq(arm)].set_index("interval_id")
-        columns = {"forecasts": f"{prefix}_oos_forecasts", "reported_coverage": f"{prefix}_oos_coverage"}
-        if arm != INTERSECTION:
-            part = part.assign(not_forecast_per_date=part.not_forecast / part.oos_dates)
-            columns.update(
-                {
-                    "opportunities": f"{prefix}_oos_opportunities",
-                    "not_forecast": f"{prefix}_oos_not_forecast",
-                    "not_forecast_per_date": f"{prefix}_oos_not_forecast_per_date",
-                }
-            )
+        part = part.assign(not_forecast_per_date=part.not_forecast / part.oos_dates)
+        columns = {
+            "constituents_per_date": f"{prefix}_constituents_per_date",
+            "opportunities": f"{prefix}_oos_opportunities",
+            "forecasts": f"{prefix}_oos_forecasts",
+            "not_forecast": f"{prefix}_oos_not_forecast",
+            "not_forecast_per_date": f"{prefix}_oos_not_forecast_per_date",
+            "reported_coverage": f"{prefix}_oos_coverage",
+        }
         keep = (["oos_dates"] if arm == PIT else []) + list(columns)
         part = part[keep].rename(columns=columns)
         wide = part if wide is None else wide.join(part)
@@ -634,7 +634,7 @@ def markdown_table(frame: pd.DataFrame, columns: dict[str, tuple[str, str]]) -> 
 
 def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
     r1 = outputs["R1_coverage_by_market_arm"]
-    r1_show = r1[r1.universe_semantics.ne(INTERSECTION)]
+    r1_show = r1
     rej = outputs["R1_full_panel_rejections_by_reason"]
     rej_wide = rej.pivot_table(
         index=["index_id", "universe_semantics"], columns="rejection_reason",
@@ -655,7 +655,8 @@ def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
         "",
         "## R1. OOS forecast coverage by market and arm",
         "",
-        "Forecast opportunities = constituent security-dates inside valid OOS test windows. "
+        "Forecast opportunities = constituent security-dates on OOS forecast dates "
+        "(daily constituent counts are constant within each interval). "
         "Counts are per model (identical for all four models).",
         "",
         markdown_table(
@@ -664,7 +665,7 @@ def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
                 "index_id": ("Index", "str"),
                 "arm": ("Arm", "str"),
                 "oos_dates": ("OOS dates", "int"),
-                "constituents_per_oos_date": ("Constituents/date", "int"),
+                "constituents_per_oos_date_range": ("Constituents/date", "str"),
                 "forecast_opportunities": ("Opportunities", "int"),
                 "valid_forecasts_per_model": ("Valid forecasts", "int"),
                 "not_forecast": ("Not forecast", "int"),
@@ -696,6 +697,7 @@ def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
                 "pit_oos_not_forecast_per_date": ("PIT not forecast/date", "f2"),
                 "current_oos_not_forecast": ("Current not forecast", "int"),
                 "current_oos_not_forecast_per_date": ("Current not forecast/date", "f2"),
+                "intersection_oos_not_forecast": ("Intersection not forecast", "int"),
             },
         ),
         "",

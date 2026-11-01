@@ -35,7 +35,7 @@
       }
     },
     {
-      "check": "interval_coverage_reproduced_pit_and_current",
+      "check": "interval_coverage_reproduced_all_arms",
       "status": "PASS",
       "detail": 4.440892098500626e-16
     },

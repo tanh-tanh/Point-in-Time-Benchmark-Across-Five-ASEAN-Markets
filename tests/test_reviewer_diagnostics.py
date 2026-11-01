@@ -40,7 +40,8 @@ def test_public_diagnostic_values(tmp_path):
     r1 = pd.read_csv(tmp_path / "R1_coverage_by_market_arm.csv").set_index(["index_id", "universe_semantics"])
     assert r1.loc[("PSEI", "CURRENT_2026_APPLIED_BACKWARD"), "not_forecast"] == 5589
     assert r1.loc[("FBM_KLCI", "POINT_IN_TIME"), "not_forecast"] == 482
-    assert np.isnan(r1.loc[("PSEI", "PIT_CURRENT_INTERSECTION_CONTROL"), "forecast_opportunities"])
+    assert r1.loc[("PSEI", "PIT_CURRENT_INTERSECTION_CONTROL"), "forecast_opportunities"] == 19440
+    assert r1.forecast_opportunities.notna().all()
     r2 = pd.read_csv(tmp_path / "R2_bootstrap_block_sensitivity.csv")
     full = r2[r2.support_specification.eq("FULL_SUPPORT")]
     assert len(full) == 16 and set(full.block_length) == {10, 20, 40}
@@ -55,30 +56,42 @@ def test_public_diagnostic_values(tmp_path):
 
 
 def _fixture():
-    days = pd.bdate_range("2001-01-01", periods=4)
-    d1, d2, d3, d4 = days
+    """Synthetic software fixture (not market evidence).
+
+    PIT members A, B; current-2026 roster A, C, D; intersection A.
+    B: PIT member with an internal price gap (DATA).
+    C: current-only, first price inside provider p1's coverage (SELECTION).
+    D: current-only, first price on provider p2's first date (DATA_SCOPE).
+    d5: scheduled test date on which no security is forecast.
+    """
+    days = pd.bdate_range("2001-01-01", periods=5)
+    d1, d2, d3, d4, d5 = days
+    early = pd.Timestamp("2000-12-01")
     base = dict(market="Philippines", index_id="PSEI", interval_id="I1")
+    roster = {
+        "POINT_IN_TIME": ["A", "B"],
+        "CURRENT_2026_APPLIED_BACKWARD": ["A", "C", "D"],
+        "PIT_CURRENT_INTERSECTION_CONTROL": ["A"],
+    }
     members = pd.DataFrame(
-        [dict(base, universe_semantics="POINT_IN_TIME", security_id=s, ticker_on_date=s, membership_date=d)
-         for s in ["A", "B"] for d in days]
-        + [dict(base, universe_semantics="CURRENT_2026_APPLIED_BACKWARD", security_id=s, ticker_on_date=s,
-                membership_date=d) for s in ["A", "C"] for d in days]
-        + [dict(base, universe_semantics="PIT_CURRENT_INTERSECTION_CONTROL", security_id="A",
-                ticker_on_date="A", membership_date=d) for d in days]
+        [dict(base, universe_semantics=a, security_id=s, ticker_on_date=s, membership_date=d)
+         for a, names in roster.items() for s in names for d in days]
     )
     folds = pd.DataFrame([
-        dict(interval_id="I1", fold_id="F1", test_start=d2, test_end=d4, valid_fold=True),
+        dict(interval_id="I1", fold_id="F1", test_start=d2, test_end=d5, valid_fold=True),
         dict(interval_id="I1", fold_id="F0", test_start=d1, test_end=d1, valid_fold=False),
     ])
     raw = pd.DataFrame(
-        [dict(market="Philippines", security_id="A", date=d) for d in days]
-        + [dict(market="Philippines", security_id="B", date=d) for d in [d1, d2, d4]]
-        + [dict(market="Philippines", security_id="C", date=d4)]
+        [dict(market="Philippines", security_id="A", date=d, provider="p1") for d in [early, *days]]
+        + [dict(market="Philippines", security_id="B", date=d, provider="p1") for d in [d1, d2, d4]]
+        + [dict(market="Philippines", security_id="C", date=d4, provider="p1")]
+        + [dict(market="Philippines", security_id="D", date=d4, provider="p2")]
     )
     forecast = (
         [("POINT_IN_TIME", "A", d) for d in [d2, d3, d4]]
         + [("POINT_IN_TIME", "B", d) for d in [d2, d4]]
         + [("CURRENT_2026_APPLIED_BACKWARD", "A", d) for d in [d2, d3, d4]]
+        + [("CURRENT_2026_APPLIED_BACKWARD", "D", d4)]
         + [("PIT_CURRENT_INTERSECTION_CONTROL", "A", d) for d in [d2, d3, d4]]
     )
     models = ["historical_class_probability", "lightgbm", "logistic_regression", "random_forest"]
@@ -87,42 +100,49 @@ def _fixture():
               target_date=d + pd.Timedelta(days=1), actual_class=1, prediction_probability=0.5)
          for a, s, d in forecast for m in models]
     )
-    rejections = pd.DataFrame([
-        dict(index_id="PSEI", universe_semantics="POINT_IN_TIME", security_id="B", prediction_date=d3,
-             rejection_reason="MISSING_PREDICTION_RAW_OHLC"),
-        dict(index_id="PSEI", universe_semantics="CURRENT_2026_APPLIED_BACKWARD", security_id="C",
-             prediction_date=d2, rejection_reason="MISSING_PREDICTION_RAW_OHLC"),
-        dict(index_id="PSEI", universe_semantics="CURRENT_2026_APPLIED_BACKWARD", security_id="C",
-             prediction_date=d3, rejection_reason="MISSING_PREDICTION_RAW_OHLC"),
-        dict(index_id="PSEI", universe_semantics="CURRENT_2026_APPLIED_BACKWARD", security_id="C",
-             prediction_date=d4, rejection_reason="MISSING_FEATURES"),
-        dict(index_id="PSEI", universe_semantics="POINT_IN_TIME", security_id="A", prediction_date=d1,
-             rejection_reason="MISSING_FEATURES"),
-    ])
+    rejection_rows = [
+        ("POINT_IN_TIME", "B", d3, "MISSING_PREDICTION_RAW_OHLC"),
+        ("CURRENT_2026_APPLIED_BACKWARD", "C", d2, "MISSING_PREDICTION_RAW_OHLC"),
+        ("CURRENT_2026_APPLIED_BACKWARD", "C", d3, "MISSING_PREDICTION_RAW_OHLC"),
+        ("CURRENT_2026_APPLIED_BACKWARD", "C", d4, "MISSING_FEATURES"),
+        ("CURRENT_2026_APPLIED_BACKWARD", "D", d2, "MISSING_PREDICTION_RAW_OHLC"),
+        ("CURRENT_2026_APPLIED_BACKWARD", "D", d3, "MISSING_PREDICTION_RAW_OHLC"),
+        ("POINT_IN_TIME", "A", d1, "MISSING_FEATURES"),
+    ] + [(a, s, d5, "TARGET_OUTSIDE_ACTIVE_MEMBERSHIP") for a, names in roster.items() for s in names]
+    rejections = pd.DataFrame(
+        [dict(index_id="PSEI", universe_semantics=a, security_id=s, prediction_date=d, rejection_reason=r)
+         for a, s, d, r in rejection_rows]
+    )
     return members, folds, predictions, rejections, raw
 
 
 def test_private_status_panel_attribution_fixture():
     private = _load("private_coverage_audit")
     panel, diagnostics = private.build_status_panel(*_fixture())
-    assert all(v == 0 for k, v in diagnostics.items() if k != "models")
+    assert diagnostics["scheduled_test_dates_without_any_forecast"] == {"PSEI": 1}
+    assert all(v == 0 for k, v in diagnostics.items() if k not in {"models", "scheduled_test_dates_without_any_forecast"})
     summary = private.summarise_by_reason(panel).set_index("universe_semantics")
-    assert summary.loc["POINT_IN_TIME", "forecast_opportunities"] == 6
-    assert summary.loc["POINT_IN_TIME", "valid_forecasts"] == 5
-    assert summary.loc["CURRENT_2026_APPLIED_BACKWARD", "valid_forecasts"] == 3
-    assert summary.loc["CURRENT_2026_APPLIED_BACKWARD", "excluded_selection"] == 2
-    assert summary.loc["CURRENT_2026_APPLIED_BACKWARD", "excluded_data"] == 1
-    assert summary.loc["PIT_CURRENT_INTERSECTION_CONTROL", "forecast_opportunities"] == 3
-    excluded = panel[panel.exclusion_reason.ne(private.FORECAST)]
-    b = excluded[excluded.universe_semantics.eq("POINT_IN_TIME") & excluded.security_id.eq("B")]
-    assert len(b) == 1
-    b = b.iloc[0]
+    pit, cur, inter = (summary.loc[a] for a in private.ARMS)
+    assert (pit.oos_dates, pit.scheduled_oos_dates) == (3, 4)
+    assert (pit.forecast_opportunities, pit.valid_forecasts, pit.scheduled_opportunities) == (6, 5, 8)
+    assert (cur.forecast_opportunities, cur.valid_forecasts, cur.opportunities_on_dates_without_forecast) == (9, 4, 3)
+    assert (cur.excluded_selection, cur.excluded_data) == (2, 3)
+    assert (inter.forecast_opportunities, inter.valid_forecasts) == (3, 3)
+    excluded = panel[panel.exclusion_reason.ne(private.FORECAST) & panel.forecast_date]
+    assert len(excluded) == 6
+
+    def rows(arm, security):
+        return excluded[excluded.universe_semantics.eq(arm) & excluded.security_id.eq(security)]
+
+    b = rows("POINT_IN_TIME", "B").iloc[0]
     assert b.price_position == "INTERNAL_PRICE_GAP" and b.attribution == "DATA_PRICE_UNAVAILABLE"
     assert b.membership_role == "PIT_ONLY_LATER_REMOVED"
-    c = excluded[excluded.universe_semantics.eq("CURRENT_2026_APPLIED_BACKWARD") & excluded.security_id.eq("C")]
-    assert len(c) == 3 and len(excluded) == 4
+    c = rows("CURRENT_2026_APPLIED_BACKWARD", "C")
     assert set(c.attribution) == {"SELECTION_BACKWARD_ROSTER_BEFORE_FIRST_PRICE", "DATA_FEATURE_HISTORY"}
     assert set(c.membership_role) == {"CURRENT_ONLY_NOT_PIT_MEMBER_ON_DATE"}
+    d = rows("CURRENT_2026_APPLIED_BACKWARD", "D")
+    assert set(d.attribution) == {"DATA_SCOPE_FIRST_PRICE_AT_PROVIDER_START"}
+    assert set(d.first_price_provider) == {"p2"}
     cs = private.common_support(_fixture()[2])
     assert cs.common_support_pairs.eq(3).all() and len(cs) == 4
 

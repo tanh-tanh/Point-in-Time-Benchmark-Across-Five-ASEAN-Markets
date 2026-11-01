@@ -14,7 +14,8 @@ All counts are **per model**. The four models forecast the same security-dates i
 ## 1. Coverage by market and arm (R1)
 
 ### Definitions
-- **Forecast opportunity**: a constituent security-date of an arm that falls inside a valid OOS test window. The PIT arm has 30 constituents per date (SET50: 50). The current arm applies the 2026 roster to every PIT date, so it has a constant 30 (SET50: 50). Opportunities equal OOS dates × constituents. The script accepts this only because it reproduces every reported interval coverage exactly. The intersection arm's daily denominator varies, so its opportunities need the private audit.
+- **Forecast opportunity**: a constituent security-date of an arm on an OOS forecast date. PIT membership is constant within an interval, so every arm's daily constituent count is too. PIT has 30 per date (SET50: 50). The current arm applies the 2026 roster to every PIT date, so it has a constant 30 (SET50: 50). The intersection arm has 20–30 depending on the interval. Opportunities equal OOS dates × constituents, summed over intervals. The script accepts each denominator only because it is an integer and reproduces every reported interval coverage exactly (all 28 intervals × 3 arms).
+- **Scheduled versus forecast dates**: the four valid IDX30 folds schedule 80 test dates, but 79 carry forecasts. Published coverage, and the counts here, use the 79 forecast dates. The private audit reports both bases (`scheduled_opportunities` gives 2,400 for IDX30 PIT and current).
 - **Valid forecast**: a seed-collapsed prediction scored in the benchmark.
 - **Not forecast**: opportunities minus valid forecasts.
 - **Reported coverage** (Table 7) is equal-weighted over dates, intervals and markets. **Pooled coverage** is the simple ratio. The two differ only through weighting.
@@ -29,6 +30,8 @@ All counts are **per model**. The four models forecast the same security-dates i
 | PSEI | 125 / 27,000 | **5,589 / 27,000** |
 | FBM KLCI | 482 / 57,000 | **2,093 / 57,000** |
 
+The intersection arm misses only 1 of 19,440 (PSEI) and 1 of 47,380 (FBM KLCI), and nothing elsewhere.
+
 The −3.45 percentage-point macro coverage gap (current minus PIT) comes from PSEI (−19.4 pp) and FBM KLCI (−3.1 pp). In the other three markets the current arm covers 1.7–2.0 pp more.
 
 ### Exclusions by reason
@@ -40,19 +43,25 @@ The OOS-restricted split by reason (opportunities = valid forecasts + exclusions
 `R1_interval_detail_PSEI_FBM_KLCI.csv` tracks each interval.
 
 - **Why only 9 of 22 PSEI intervals are data-ready.** Twelve intervals from February 2021 to February 2026 fail the 95% data gate. Their PIT price coverage is 70.0–93.3%, meaning 2 to 9 *true historical members* per date have no raw OHLC. One 12-day interval (September 2017) fails only on target-pair coverage (88.6%). The gate is a protocol threshold, but missing price data for genuine PIT members trips it. The cause is the **data**, not stock selection. PSEI evaluation therefore covers 2017–2021 plus 2026.
+- **The price sources explain the 2021 break** (`audit/raw_provenance_summary.csv`). Philippine prices come from an archive of 39 securities that ends on 2021-03-12, and from an open-source EOD set of 30 securities that starts on 2021-01-04. In the 2026 interval the current arm misses nothing, so all 30 roster names have 2026 prices. Only the EOD set covers 2026, and it has exactly 30 securities, so its 30 are the 2026 roster. After March 2021, PIT members outside the 2026 roster have no price source. The PSEI exclusion of 2021–2026 is therefore survivorship in the *price acquisition*, not a selection made by the benchmark.
 - **PIT arm inside OOS (125 not forecast).** One member per date in the March 2017 and February 2026 intervals (120 member-days), plus 5 scattered member-days. These are data gaps for true members.
-- **Current arm inside OOS (5,589 not forecast).** About 7 of the 30 constituents of the 2026 roster are not forecastable on each date from 2017 to August 2020. The number falls to 5.4 per date in the August 2020 interval and to 0 in the 2026 interval, where all 30 are priced. These securities enter the price record later. That pattern fits **selection by backward application of the 2026 roster** to dates before they traded under their identifiers. A late provider history or an unmapped ticker change would look the same, so the attribution stays provisional until listing dates are checked. The private audit lists each security with its first observed price date. In the full panel, 12 PSEI securities have missing prices in the current arm.
+- **Current arm inside OOS (5,589 not forecast): not yet attributable from public data.** About 7 of the 30 constituents of the 2026 roster are not forecastable on each date from 2017 to August 2020. The number falls to 5.4 per date in the last 2017–2021 interval, whose test window ends on 2021-01-18, and to 0 in 2026. Two explanations fit:
+  - *Selection*: the 2026 roster is applied to dates before these firms listed or traded under their identifiers.
+  - *Acquisition scope*: before 2021 the only Philippine price source is the 39-security archive. If it holds only historical index members, current-only names have no pre-2021 prices whether or not they were trading.
+
+  The private audit separates the two. It records each missing security's first observed price date and the provider that supplied it. A first price on the EOD set's first date (2021-01-04) is labelled `DATA_SCOPE_FIRST_PRICE_AT_PROVIDER_START`. A later first price inside a provider's coverage is labelled selection, pending a listing-date check. In the full panel, 12 PSEI securities have missing prices in the current arm.
 - In common support, PSEI keeps 72.3% of PIT forecasts: 7,436 PIT forecasts belong to members later removed. It keeps 90.8% of current forecasts.
 
 ### FBM KLCI: one data gap in PIT, roster selection in current
 - All 13 intervals are data-ready.
 - **PIT (482 not forecast).** One member per date in the June 2018 and December 2018 intervals (121 + 360), plus 1. This matches the documented Malaysia Airports (5014) gap: 493 active member-days with no joined price and no imputation (see LIMITATIONS item 5 and S15). It is a **data** gap.
-- **Current (2,093 not forecast).** 2 per date in 2018–mid 2020, 1 per date to mid 2024, 0.5 per date in the June 2024 interval, 0 from December 2024. As with PSEI, this is the **backward roster selection** pattern, pending a listing-date check. In the full panel, 19 FBM securities have missing prices in the current arm.
+- **Current (2,093 not forecast).** 2 per date in 2018–mid 2020, 1 per date to mid 2024, 0.5 per date in the June 2024 interval, 0 from December 2024. The steps fall inside intervals (June–December 2020, June–December 2024). They do not fall at the Malaysian provider boundaries (2016-01-04, 2017-11-01, 2022-01-03). That fits **backward roster selection**, with names entering the price record when they list, pending the private audit and a listing-date check. In the full panel, 19 FBM securities have missing prices in the current arm.
 
 ### Attribution rules used by the private audit
 | Status of an OOS opportunity | Attribution |
 |---|---|
-| Missing price; current arm; security not a PIT member that date; date before its first observed price | `SELECTION_BACKWARD_ROSTER_BEFORE_FIRST_PRICE` (confirm listing date) |
+| Missing price; current arm; security not a PIT member that date; date before its first observed price; first price within 7 days of its provider's first date | `DATA_SCOPE_FIRST_PRICE_AT_PROVIDER_START` |
+| Same, but first price later inside the provider's coverage | `SELECTION_BACKWARD_ROSTER_BEFORE_FIRST_PRICE` (confirm listing date) |
 | Missing price, any other case (PIT member, internal gap, no series, after last price) | `DATA_PRICE_UNAVAILABLE` |
 | No next same-security observation, or gap > 14 days | `DATA_TARGET_UNAVAILABLE` |
 | Missing lagged features | `DATA_FEATURE_HISTORY` |
@@ -99,9 +108,9 @@ python scripts/private_coverage_audit.py --evidence-root PRIVATE_EVIDENCE_ROOT -
 
 It reads membership, the fold calendar, collapsed predictions, raw OHLC dates and `qa/pit_multimarket_observation_rejections_v8.parquet`. It writes:
 
-- `R1_private_oos_coverage_by_reason.csv`: OOS opportunities, valid forecasts and exclusions per reason and per attribution, for all three arms.
+- `R1_private_oos_coverage_by_reason.csv`: OOS opportunities, valid forecasts and exclusions per reason and per attribution, for all three arms, on forecast dates and on scheduled test dates.
 - `R1_private_oos_exclusions_attributed.csv`: the same exclusions by membership role, reason, position against the price record, and attribution.
-- `R1_private_security_detail_PSEI_FBM_KLCI.csv`: every excluded security, with first and last observed price dates, for the listing-date check.
+- `R1_private_security_detail_PSEI_FBM_KLCI.csv`: every excluded security, with first and last observed price dates and the provider of the first price, for the listing-date check.
 - `R1_private_pit_price_gaps_*_PSEI_FBM_KLCI.csv`: unpriced PIT member-days in every interval, including those that failed the gate.
 - `R3_private_common_support_by_model.csv` and the R2 same-scope bootstrap.
 

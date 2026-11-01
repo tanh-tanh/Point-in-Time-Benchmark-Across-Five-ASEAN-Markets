@@ -47,6 +47,10 @@ UNEXPLAINED = "NOT_FORECAST_UNEXPLAINED"
 PARTIAL = "PARTIAL_MODEL_FORECAST"
 BLOCK40_MIN_DATES = 80
 TOLERANCE = 1e-12
+# A first observed price within this many calendar days of the start of the
+# provider that supplied it is treated as the provider's coverage start, not
+# as evidence about when the security began trading.
+PROVIDER_START_TOLERANCE_DAYS = 7
 
 
 def as_day(series: pd.Series) -> pd.Series:
@@ -101,12 +105,30 @@ def membership_roles(members: pd.DataFrame) -> pd.DataFrame:
 
 
 def price_spans(raw: pd.DataFrame) -> pd.DataFrame:
-    r = raw[["market", "security_id", "date"]].copy()
+    """First/last observed price per security and the provider of the first price."""
+    columns = ["market", "security_id", "date"] + (["provider"] if "provider" in raw else [])
+    r = raw[columns].copy()
     r["date"] = as_day(r.date)
-    return (
+    spans = (
         r.groupby(["market", "security_id"])
         .date.agg(first_price_date="min", last_price_date="max", price_days="count")
         .reset_index()
+    )
+    if "provider" not in r:
+        spans["first_price_provider"] = np.nan
+        spans["first_price_provider_start"] = pd.NaT
+        return spans
+    first = (
+        r.sort_values(["market", "security_id", "date", "provider"], kind="stable")
+        .drop_duplicates(["market", "security_id"])[["market", "security_id", "provider"]]
+        .rename(columns={"provider": "first_price_provider"})
+    )
+    starts = (
+        r.groupby(["market", "provider"]).date.min().rename("first_price_provider_start").reset_index()
+        .rename(columns={"provider": "first_price_provider"})
+    )
+    return spans.merge(first, on=["market", "security_id"], validate="one_to_one").merge(
+        starts, on=["market", "first_price_provider"], validate="many_to_one"
     )
 
 
@@ -122,6 +144,8 @@ def classify_price_position(frame: pd.DataFrame, spans: pd.DataFrame) -> pd.Data
         ["NO_RAW_PRICE_SERIES", "BEFORE_FIRST_OBSERVED_PRICE", "AFTER_LAST_OBSERVED_PRICE"],
         "INTERNAL_PRICE_GAP",
     )
+    lag = (x.first_price_date - x.first_price_provider_start).dt.days
+    x["first_price_at_provider_start"] = lag.le(PROVIDER_START_TOLERANCE_DAYS).fillna(False).astype(bool)
     return x
 
 
@@ -130,22 +154,31 @@ def attribute(frame: pd.DataFrame) -> pd.Series:
 
     SELECTION is assigned only to current-arm member-days of securities that
     were not PIT members on that date and had not yet appeared in the price
-    record: the 2026 roster was applied to a date before the security traded
-    under its identifier. Confirm against listing dates, because a late
-    provider history or an unmapped ticker change looks the same.
+    record, when the first price falls inside the supplying provider's
+    coverage: the 2026 roster was applied to a date before the security traded
+    under its identifier. If the first price coincides with the provider's
+    coverage start, the gap reflects acquisition scope (DATA_SCOPE), e.g. an
+    archive that holds only historical members. Confirm SELECTION against
+    listing dates, because an unmapped ticker change looks the same.
     """
     status = frame.exclusion_reason
     missing_price = status.eq(MISSING_PRICE)
     position = frame.get("price_position", pd.Series("", index=frame.index)).fillna("")
+    at_start = frame.get("first_price_at_provider_start", pd.Series(False, index=frame.index))
+    at_start = at_start.astype("boolean").fillna(False).astype(bool)
     role = frame.membership_role.fillna("")
+    backward_before_first = (
+        missing_price
+        & frame.universe_semantics.eq(CURRENT)
+        & role.eq("CURRENT_ONLY_NOT_PIT_MEMBER_ON_DATE")
+        & position.eq("BEFORE_FIRST_OBSERVED_PRICE")
+    )
     return pd.Series(
         np.select(
             [
                 status.eq(FORECAST),
-                missing_price
-                & frame.universe_semantics.eq(CURRENT)
-                & role.eq("CURRENT_ONLY_NOT_PIT_MEMBER_ON_DATE")
-                & position.eq("BEFORE_FIRST_OBSERVED_PRICE"),
+                backward_before_first & at_start,
+                backward_before_first,
                 missing_price,
                 status.isin(["NO_NEXT_VALID_SAME_SECURITY_OBSERVATION", "LONG_TARGET_GAP"]),
                 status.eq("MISSING_FEATURES"),
@@ -154,6 +187,7 @@ def attribute(frame: pd.DataFrame) -> pd.Series:
             ],
             [
                 "FORECAST",
+                "DATA_SCOPE_FIRST_PRICE_AT_PROVIDER_START",
                 "SELECTION_BACKWARD_ROSTER_BEFORE_FIRST_PRICE",
                 "DATA_PRICE_UNAVAILABLE",
                 "DATA_TARGET_UNAVAILABLE",
@@ -197,16 +231,27 @@ def build_status_panel(
     unpriced = x.exclusion_reason.eq(MISSING_PRICE)
     positioned = classify_price_position(x[unpriced], price_spans(raw))
     x["price_position"] = ""
+    x["first_price_provider"] = ""
+    x["first_price_at_provider_start"] = False
     x["first_price_date"] = pd.NaT
     x["last_price_date"] = pd.NaT
-    x.loc[unpriced, "price_position"] = positioned.price_position.to_numpy()
-    x.loc[unpriced, "first_price_date"] = positioned.first_price_date.to_numpy()
-    x.loc[unpriced, "last_price_date"] = positioned.last_price_date.to_numpy()
+    x["first_price_provider_start"] = pd.NaT
+    for column in ["price_position", "first_price_provider", "first_price_at_provider_start",
+                   "first_price_date", "last_price_date", "first_price_provider_start"]:
+        x.loc[unpriced, column] = positioned[column].to_numpy()
+    x["first_price_at_provider_start"] = x.first_price_at_provider_start.astype(bool)
     x["attribution"] = attribute(x)
 
     p = predictions[KEY].drop_duplicates().copy()
     p["prediction_date"] = as_day(p.prediction_date)
     outside = len(p.merge(opps[KEY], on=KEY, how="left", indicator=True).query("_merge == 'left_only'"))
+    # Published coverage counts only dates with at least one forecast in the
+    # market; a scheduled test date with none (one IDX30 date) is kept but
+    # flagged so both totals can be reported.
+    forecast_dates = p[["index_id", "prediction_date"]].drop_duplicates().assign(forecast_date=True)
+    x = x.merge(forecast_dates, on=["index_id", "prediction_date"], how="left", validate="many_to_one")
+    x["forecast_date"] = x.forecast_date.astype("boolean").fillna(False).astype(bool)
+    no_forecast_dates = x[~x.forecast_date].groupby("index_id").prediction_date.nunique()
     diagnostics = {
         "models": n_models,
         "rejection_keys_with_conflicting_reasons": conflicting,
@@ -214,11 +259,23 @@ def build_status_panel(
         "forecasts_outside_oos_opportunity_set": outside,
         "partial_model_forecasts": int(x.exclusion_reason.eq(PARTIAL).sum()),
         "unexplained_not_forecast": int(x.exclusion_reason.eq(UNEXPLAINED).sum()),
+        "scheduled_test_dates_without_any_forecast": {k: int(v) for k, v in no_forecast_dates.items()},
     }
     return x, diagnostics
 
 
 def summarise_by_reason(panel: pd.DataFrame) -> pd.DataFrame:
+    """Coverage by reason on OOS forecast dates (the published coverage basis).
+
+    ``scheduled_opportunities`` also counts test dates on which the market has
+    no forecast at all; those member-days are excluded from the reason columns
+    and reported in ``opportunities_on_dates_without_forecast``.
+    """
+    scheduled = panel.groupby(["index_id", "universe_semantics"]).agg(
+        scheduled_oos_dates=("prediction_date", "nunique"),
+        scheduled_opportunities=("security_id", "size"),
+    )
+    panel = panel[panel.forecast_date]
     wide = (
         panel.pivot_table(
             index=["index_id", "universe_semantics"], columns="exclusion_reason",
@@ -241,9 +298,12 @@ def summarise_by_reason(panel: pd.DataFrame) -> pd.DataFrame:
         wide[f"excluded_{name.lower()}"] = [
             int(sizes.get((a, b), 0)) for a, b in zip(wide.index_id, wide.universe_semantics)
         ]
+    wide = wide.merge(scheduled.reset_index(), on=["index_id", "universe_semantics"], validate="one_to_one")
+    wide["opportunities_on_dates_without_forecast"] = wide.scheduled_opportunities - wide.forecast_opportunities
     first = [
         "index_id", "universe_semantics", "oos_dates", "forecast_opportunities", "valid_forecasts",
         "excluded", "coverage", "excluded_data", "excluded_selection", "excluded_protocol",
+        "scheduled_oos_dates", "scheduled_opportunities", "opportunities_on_dates_without_forecast",
     ]
     return _order(wide[first + sorted(reasons)])
 
@@ -252,8 +312,8 @@ def summarise_long(panel: pd.DataFrame) -> pd.DataFrame:
     excluded = panel[panel.exclusion_reason.ne(FORECAST)]
     out = (
         excluded.groupby(
-            ["index_id", "universe_semantics", "membership_role", "exclusion_reason",
-             "price_position", "attribution"],
+            ["index_id", "universe_semantics", "forecast_date", "membership_role", "exclusion_reason",
+             "price_position", "first_price_at_provider_start", "attribution"],
             dropna=False,
         )
         .agg(member_days=("security_id", "size"), securities=("security_id", "nunique"))
@@ -266,8 +326,8 @@ def security_detail(panel: pd.DataFrame, markets: list[str] = DEEP_DIVE) -> pd.D
     excluded = panel[panel.exclusion_reason.ne(FORECAST) & panel.index_id.isin(markets)]
     out = (
         excluded.groupby(
-            ["index_id", "universe_semantics", "security_id", "ticker_on_date", "membership_role",
-             "exclusion_reason", "price_position", "attribution"],
+            ["index_id", "universe_semantics", "security_id", "ticker_on_date", "forecast_date",
+             "membership_role", "exclusion_reason", "price_position", "attribution"],
             dropna=False,
         )
         .agg(
@@ -276,6 +336,8 @@ def security_detail(panel: pd.DataFrame, markets: list[str] = DEEP_DIVE) -> pd.D
             last_oos_date=("prediction_date", "max"),
             first_price_date=("first_price_date", "min"),
             last_price_date=("last_price_date", "max"),
+            first_price_provider=("first_price_provider", "first"),
+            first_price_provider_start=("first_price_provider_start", "min"),
         )
         .reset_index()
     )
@@ -309,7 +371,8 @@ def pit_price_gaps(
              first_unpriced_date=("prediction_date", "min"),
              last_unpriced_date=("prediction_date", "max"),
              first_price_date=("first_price_date", "min"),
-             last_price_date=("last_price_date", "max"))
+             last_price_date=("last_price_date", "max"),
+             first_price_provider=("first_price_provider", "first"))
         .reset_index()
     )
     summary = (
@@ -457,7 +520,7 @@ def run(evidence_root: Path, output: Path, *, samples: int, bootstrap: bool) -> 
     rejections = pd.read_parquet(rejection_path, columns=KEY + ["rejection_reason"])
     raw = pd.read_parquet(
         P / "processed" / "pit_historical_raw_ohlc_recovered_v8.parquet",
-        columns=["market", "security_id", "date"],
+        columns=["market", "security_id", "date", "provider"],
     )
     inventory = pd.read_csv(ROOT / "tables" / "supplementary" / "S04_interval_inventory.csv")
 
@@ -477,7 +540,7 @@ def run(evidence_root: Path, output: Path, *, samples: int, bootstrap: bool) -> 
     _check(checks, "valid_forecasts_match_public_r1",
            bool(merged.valid_forecasts.eq(merged.valid_forecasts_per_model).all()), int(len(merged)))
     derivable = merged.forecast_opportunities_y.notna()
-    _check(checks, "opportunities_match_public_r1_pit_current",
+    _check(checks, "opportunities_match_public_r1_all_arms",
            bool(merged.loc[derivable, "forecast_opportunities_x"].eq(merged.loc[derivable, "forecast_opportunities_y"]).all()),
            int(derivable.sum()))
     _check(checks, "opportunities_reconcile",
