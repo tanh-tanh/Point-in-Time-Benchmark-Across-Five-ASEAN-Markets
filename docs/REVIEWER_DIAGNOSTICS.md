@@ -1,17 +1,20 @@
-# Reviewer diagnostics: coverage, block-length sensitivity and common support
+# Reviewer diagnostics: coverage, block-length sensitivity, common support and horizon 5
 
-This note answers three review requests. Tables are generated, not hand-entered:
+This note answers four review requests. Tables are generated, not hand-entered:
 
 ```sh
 python scripts/reviewer_diagnostics.py          # public aggregates -> tables/reviewer_diagnostics/
 python -m pytest tests -q
 ```
 
-`tables/reviewer_diagnostics/SUMMARY.md` renders the tables; the CSVs hold full precision; `verification.json` records 14 checks against the frozen release (all PASS). No model is refit and no observation-level file is read. The parts that need restricted evidence come from `scripts/private_coverage_audit.py` (see the last section).
+`tables/reviewer_diagnostics/SUMMARY.md` renders the tables; the CSVs hold full precision; `verification.json` records 18 checks against the frozen release and the audit counts (all PASS). No model is refit and no observation-level file is read. The parts that need restricted evidence come from `scripts/private_coverage_audit.py` (see the last section).
 
 All counts are **per model**. The four models forecast the same security-dates in every arm, which the script checks. Table 1's "collapsed predictions" equal the sum over three arms × four models. Seed-level predictions are five times that.
 
 ## 1. Coverage by market and arm (R1)
+
+### Two cuts
+Coverage is cut twice. First, the interval data gate runs on the PIT roster: an interval is forecast in every arm only if PIT price and target-pair coverage are both at least 0.95 (`R1_interval_gate_by_market.csv`). Ready intervals: IDX30 2/26, SET50 2/12, VN30 2/21, PSEI 9/22, FBM KLCI 13/13. Second, inside ready intervals, individual security-dates are excluded (below). For every market, the unpriced PIT member-days in S04 (ready plus not-ready intervals) equal the PIT `MISSING_PREDICTION_RAW_OHLC` rejections in S05. For PSEI that is 224 + 7,135 = 7,359.
 
 ### Definitions
 - **Forecast opportunity**: a constituent security-date of an arm on an OOS forecast date. PIT membership is constant within an interval, so every arm's daily constituent count is too. PIT has 30 per date (SET50: 50). The current arm applies the 2026 roster to every PIT date, so it has a constant 30 (SET50: 50). The intersection arm has 20–30 depending on the interval. Opportunities equal OOS dates × constituents, summed over intervals. The script accepts each denominator only because it is an integer and reproduces every reported interval coverage exactly (all 28 intervals × 3 arms).
@@ -83,6 +86,8 @@ The OOS-restricted split by reason (opportunities = valid forecasts + exclusions
 - **Why the block-40 point estimates move** (`R2_block40_decomposition.csv`, reproduced exactly from public interval Brier scores). For historical probability: +0.000189 with five markets → +0.000188 with IDX30 removed → +0.000276 with the three short intervals removed. The shift comes from dropping short intervals, not from IDX30 and not from block length. The exploratory `SUPPORTED_CURRENT_PIT_DIFFERENCE` for historical probability at block 40 is therefore a different-scope result. It does not replace the five-market confirmatory conclusion. For random forest the block-40 interval excludes zero, but BH p = 0.069, so the joint gate is not passed.
 - `private_coverage_audit.py` reruns blocks 10, 20 and 40 on the identical block-40 scope with the original engine (`R2_private_same_scope_bootstrap.csv`). That isolates the effect of block length on the intervals. It first replays the published confirmatory block-20 result as a check.
 
+Market-level cells (`R2_bootstrap_market_level.csv`): no full-support cell has BH p < 0.05 at any block length. The 4 supported cells are all common support, logistic regression, IDX30 and VN30, at blocks 10 and 20.
+
 ## 3. Data and common support (R3)
 
 `R3_oos_forecasts_common_support.csv` (per model):
@@ -97,6 +102,16 @@ The OOS-restricted split by reason (opportunities = valid forecasts + exclusions
 | Total | 3,299 | 165 | 102,763 | 96,088 | 85,948 | 85,948 |
 
 Common support matches PIT and current predictions on market, interval, fold, model, security, prediction date, target date and realised class. The counts equal the separately trained intersection arm's counts market by market, but the two are different objects: matched predictions from two fitted arms versus a third fitted arm.
+
+## 4. Horizon 5: feasibility (R4)
+
+The original pipeline already enforces label maturity with the target date. A training row needs both `prediction_date < calibration_start` and `target_date < calibration_start` (`pit_multimarket_forecasting_v7.py`, `run_oos_models`), and `label_maturity_cutoff` records the latest training target date. With a five-session target (open of t+1 to close of t+5), the same rule purges the last training dates whose labels are not yet known, and the 20-date calibration window stays a buffer before the first test date. Only the label construction changes.
+
+`R4_h5_expected_scope_*.csv` estimates the OOS calendar under that design, holding folds, rosters and the interval gate fixed. The rule reproduces every h = 1 interval's OOS date count. At the end of each market's history, dates without five following sessions drop out of every arm: IDX30 79 → 75 (0 sessions after its final test date), SET50 240 → 237 (2 sessions). VN30, PSEI and FBM KLCI keep all dates (18, 19 and 13 sessions). At internal rebalances with fewer than five following sessions (SET50 1, PSEI 6, FBM KLCI 4 intervals), only securities leaving the PIT roster lose dates, in the PIT and intersection arms. All five markets still pass the validity gate (at least 2 folds, 40 OOS dates and 800 forecasts). Block 40 still has four markets, because IDX30 has no interval with 80 dates. Five-session labels overlap across consecutive dates, so a block of 10 is only twice the label length. Block 20 is the natural primary analog. These are estimates; exact counts and results require running the h = 5 experiment on the restricted evidence. Any such result is post-review and exploratory.
+
+## Appendix A. Audit cross-checks
+
+`A_audit_cross_checks.csv` compares counts derived from the public tables with counts the audit took on the restricted files. Ten checks match: seed-collapsed and seed-level predictions, matched current/PIT pairs, membership and feature rows, valid folds, raw price rows, FBM KLCI member-days, verified bootstrap rows, and zero temporal or probability violations. The audit verified the 76 full-support bootstrap rows independently; the 76 common-support rows are reported values and have not been independently replayed.
 
 ## Restricted-evidence audit
 

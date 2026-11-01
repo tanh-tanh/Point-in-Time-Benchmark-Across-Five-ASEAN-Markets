@@ -1,0 +1,6 @@
+index_id,market,valid_folds,h1_oos_dates,h5_expected_oos_dates,sessions_after_final_test,rebalance_exposed_intervals,h5_pit_forecasts_approx,passes_validity_gate_approx,h5_block40_intervals
+IDX30,Indonesia,4,79,75,0.0,0,2212,True,0
+SET50,Thailand,12,240,237,2.0,1,11613,True,2
+VN30,Vietnam,9,180,180,18.0,0,5280,True,1
+PSEI,Philippines,45,900,900,19.0,6,26875,True,8
+FBM_KLCI,Malaysia,95,1900,1900,13.0,4,56518,True,12

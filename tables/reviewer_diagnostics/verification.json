@@ -3,13 +3,19 @@
   "model_training": false,
   "observation_level_inputs": false,
   "outputs": [
+    "A_audit_cross_checks.csv",
     "R1_coverage_by_market_arm.csv",
     "R1_full_panel_rejections_by_reason.csv",
     "R1_interval_detail_PSEI_FBM_KLCI.csv",
+    "R1_interval_gate_by_market.csv",
+    "R1_price_sources.csv",
     "R2_block40_decomposition.csv",
     "R2_bootstrap_block_sensitivity.csv",
+    "R2_bootstrap_market_level.csv",
     "R2_interval_scope_by_block.csv",
     "R3_oos_forecasts_common_support.csv",
+    "R4_h5_expected_scope_by_interval.csv",
+    "R4_h5_expected_scope_by_market.csv",
     "SUMMARY.md"
   ],
   "checks": [
@@ -104,6 +110,43 @@
       "check": "common_support_total_matches_table_06",
       "status": "PASS",
       "detail": 85948
+    },
+    {
+      "check": "s05_pit_missing_price_equals_s04_unpriced_member_days",
+      "status": "PASS",
+      "detail": {
+        "IDX30": 11059,
+        "SET50": 6321,
+        "VN30": 19267,
+        "PSEI": 7359,
+        "FBM_KLCI": 511
+      }
+    },
+    {
+      "check": "h5_scope_rule_reproduces_h1_oos_dates",
+      "status": "PASS",
+      "detail": 28
+    },
+    {
+      "check": "audit_cross_checks_match",
+      "status": "PASS",
+      "detail": {
+        "seed_collapsed_predictions": "MATCH",
+        "seed_level_predictions": "MATCH",
+        "matched_current_pit_pairs": "MATCH",
+        "membership_rows": "MATCH",
+        "feature_rows": "MATCH",
+        "valid_folds": "MATCH",
+        "raw_price_rows": "MATCH",
+        "fbm_klci_pit_member_days": "MATCH",
+        "full_support_bootstrap_rows_verified": "MATCH",
+        "temporal_or_probability_violations": "MATCH"
+      }
+    },
+    {
+      "check": "audit_bootstrap_verification_within_tolerance",
+      "status": "PASS",
+      "detail": 1.1102230246251563e-16
     }
   ],
   "status": "PASS"

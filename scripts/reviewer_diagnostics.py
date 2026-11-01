@@ -87,7 +87,16 @@ def load_inputs() -> dict[str, pd.DataFrame]:
         "bootstrap": _read("results/pit_multimarket_primary_bootstrap_10000_v8_1_1.csv"),
         "table_04": _read("tables/table_04_absolute_brier.csv"),
         "table_06": _read("tables/table_06_common_support.csv"),
+        "folds": _read("tables/supplementary/S06_fold_calendar.csv"),
+        "provenance": _read("audit/raw_provenance_summary.csv"),
+        "data_inventory": _read("audit/data_inventory.csv"),
+        "data_schema": _read("audit/data_schema.csv"),
+        "bootstrap_verification": _read("audit/bootstrap_verification.csv"),
     }
+
+
+def _read_json(relative: str) -> dict:
+    return json.loads((ROOT / relative).read_text(encoding="utf-8"))
 
 
 def _check(checks: list[dict], name: str, ok: bool, detail) -> None:
@@ -584,6 +593,233 @@ def build_r3(
     return out
 
 
+# ------------------------------------------------------- R1 interval gate
+def build_r1_interval_gate(
+    interval_inventory: pd.DataFrame, rejections: pd.DataFrame, checks: list[dict]
+) -> pd.DataFrame:
+    """First cut on coverage: the interval data gate, computed on the PIT roster.
+
+    An interval is forecast in every arm only if PIT price and target-pair
+    coverage are both >= 0.95 (S04). Every PIT missing-price rejection in S05
+    must equal an unpriced PIT member-day in S04, ready or not.
+    """
+    inv = interval_inventory.copy()
+    inv["unpriced"] = inv.required_active_member_days - inv.covered_active_member_days
+    ready = inv.eligible_for_forecasting.astype(bool)
+    rows = []
+    for index_id in MARKET_ORDER:
+        m = inv[inv.index_id.eq(index_id)]
+        r = ready[m.index]
+        failed = m[~r]
+        rows.append(
+            {
+                "index_id": index_id,
+                "market": MARKET_NAME[index_id],
+                "pit_intervals": int(len(m)),
+                "ready_intervals": int(r.sum()),
+                "not_ready_intervals": int((~r).sum()),
+                "required_pit_member_days": int(m.required_active_member_days.sum()),
+                "unpriced_pit_member_days_ready": int(m[r].unpriced.sum()),
+                "unpriced_pit_member_days_not_ready": int(failed.unpriced.sum()),
+                "not_ready_price_coverage_min": float(failed.price_coverage.min()) if len(failed) else np.nan,
+                "not_ready_price_coverage_max": float(failed.price_coverage.max()) if len(failed) else np.nan,
+                "not_ready_failing_price_gate": int((failed.price_coverage < 0.95).sum()),
+                "not_ready_failing_target_gate_only": int(
+                    ((failed.price_coverage >= 0.95) & (failed.target_pair_coverage < 0.95)).sum()
+                ),
+            }
+        )
+    out = pd.DataFrame(rows)
+    s05 = rejections[
+        rejections.universe_semantics.eq(PIT) & rejections.rejection_reason.eq("MISSING_PREDICTION_RAW_OHLC")
+    ].set_index("index_id").rows
+    unpriced = out.set_index("index_id")
+    total = unpriced.unpriced_pit_member_days_ready + unpriced.unpriced_pit_member_days_not_ready
+    _check(
+        checks,
+        "s05_pit_missing_price_equals_s04_unpriced_member_days",
+        bool(total.eq(s05.reindex(total.index)).all()),
+        {k: int(v) for k, v in total.items()},
+    )
+    return out
+
+
+def build_r1_price_sources(provenance: pd.DataFrame) -> pd.DataFrame:
+    """Raw OHLC sources by market (audit/raw_provenance_summary.csv)."""
+    out = provenance[
+        ["market", "provider", "price_semantics", "rows", "securities", "date_min", "date_max"]
+    ].copy()
+    order = {MARKET_NAME[m]: i for i, m in enumerate(MARKET_ORDER)}
+    out["_m"] = out.market.map(order)
+    return out.sort_values(["_m", "date_min"]).drop(columns="_m").reset_index(drop=True)
+
+
+# ------------------------------------------------------ R2 market level
+def build_r2_market_level(bootstrap: pd.DataFrame) -> pd.DataFrame:
+    boot = bootstrap[bootstrap.metric.eq("brier_score") & bootstrap.inference_level.eq("market")].copy()
+    out = boot[
+        ["support_specification", "index_id", "model_id", "block_length", "valid", "point_estimate",
+         "ci_lower", "ci_upper", "raw_p_value", "adjusted_p_value", "family_id", "result_classification"]
+    ].rename(columns={"point_estimate": "current_minus_pit_brier", "ci_lower": "ci95_lower",
+                      "ci_upper": "ci95_upper", "adjusted_p_value": "bh_adjusted_p_value",
+                      "family_id": "bh_family_id", "result_classification": "classification"})
+    out.insert(2, "market", out.index_id.map(MARKET_NAME))
+    out["_s"] = out.support_specification.map({"FULL_SUPPORT": 0, "COMMON_SUPPORT": 1})
+    out["_m"] = out.index_id.map({m: i for i, m in enumerate(MARKET_ORDER)})
+    out["_o"] = out.model_id.map({m: i for i, m in enumerate(MODEL_ORDER)})
+    return out.sort_values(["_s", "_m", "_o", "block_length"]).drop(columns=["_s", "_m", "_o"]).reset_index(drop=True)
+
+
+# ------------------------------------------------------- R4 horizon 5
+H5 = 5
+
+
+def _sessions_after_last_test(row: pd.Series) -> tuple[float, str]:
+    """Trading sessions between an interval's last test date and its end."""
+    start = pd.Timestamp(row.interval_start)
+    if abs((pd.Timestamp(row.training_start) - start).days) <= 7:
+        # Market history begins with this interval: fold positions are counted from it.
+        return float(row.trading_dates - row.last_fold_position), "fold_position_from_history_start"
+    if abs((pd.Timestamp(row.first_test) - start).days) <= 7:
+        # Test windows start at the interval's first trading date and tile it.
+        return float(row.trading_dates - row.scheduled_test_dates), "trading_dates_minus_test_dates"
+    return np.nan, "undetermined"
+
+
+def build_r4_h5_scope(
+    interval_rows: pd.DataFrame, interval_inventory: pd.DataFrame, folds: pd.DataFrame
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Expected effect of a 5-session label on the OOS calendar (estimate only).
+
+    Holding folds, rosters and the interval gate fixed, a longer label removes
+    test dates only where fewer than five sessions follow the last test date:
+    at the end of a market's history every arm loses those dates; at an
+    internal rebalance only securities leaving the PIT roster lose them (PIT
+    and intersection arms). Exact counts come from the h = 5 run itself.
+    """
+    valid = folds[folds.valid_fold.astype(bool)].copy()
+    valid["position"] = valid.training_dates + valid.calibration_dates + valid.test_dates
+    by_interval = valid.groupby("interval_id").agg(
+        folds=("fold_id", "size"),
+        scheduled_test_dates=("test_dates", "sum"),
+        first_test=("test_start", "min"),
+        last_test=("test_end", "max"),
+        training_start=("training_start", "min"),
+        last_fold_position=("position", "max"),
+    )
+    inv = interval_inventory.set_index("interval_id")
+    last_interval = inv.groupby("index_id").interval_end_exclusive.transform("max").eq(inv.interval_end_exclusive)
+    h1 = interval_rows[interval_rows.universe_semantics.eq(PIT)].set_index("interval_id")
+    rows = []
+    for interval_id, f in by_interval.iterrows():
+        row = pd.concat([f, inv.loc[interval_id, ["index_id", "interval_start", "interval_end_exclusive", "trading_dates"]]])
+        after, method = _sessions_after_last_test(row)
+        end_of_history = bool(last_interval.loc[interval_id])
+        h1_dates = int(h1.loc[interval_id, "oos_dates"])
+        if end_of_history and np.isfinite(after):
+            h5_dates = int(row.scheduled_test_dates - max(0, H5 - after))
+            h1_check = int(row.scheduled_test_dates - max(0, 1 - after))
+        else:
+            h5_dates, h1_check = h1_dates, h1_dates
+        rows.append(
+            {
+                "index_id": row.index_id,
+                "market": MARKET_NAME[row.index_id],
+                "interval_id": interval_id,
+                "interval_start": row.interval_start,
+                "interval_end_exclusive": row.interval_end_exclusive,
+                "valid_folds": int(row.folds),
+                "scheduled_test_dates": int(row.scheduled_test_dates),
+                "last_test_date": row.last_test,
+                "sessions_after_last_test": after,
+                "sessions_method": method,
+                "end_of_market_history": end_of_history,
+                "h1_oos_forecast_dates": h1_dates,
+                "h1_rule_reproduces_oos_dates": h1_check == h1_dates,
+                "h5_expected_oos_dates": h5_dates,
+                "h5_rebalance_exposed": bool(not end_of_history and (not np.isfinite(after) or after < H5)),
+                "h5_block40_eligible": h5_dates >= MIN_INTERVAL_DATES[40],
+            }
+        )
+    detail = pd.DataFrame(rows).sort_values(["index_id", "interval_start"], key=_market_key).reset_index(drop=True)
+    pit_forecasts = h1.groupby("index_id").forecasts.sum()
+    summary = []
+    for index_id in MARKET_ORDER:
+        m = detail[detail.index_id.eq(index_id)]
+        h1_dates, h5_dates = int(m.h1_oos_forecast_dates.sum()), int(m.h5_expected_oos_dates.sum())
+        approx_forecasts = float(pit_forecasts[index_id]) * h5_dates / h1_dates
+        summary.append(
+            {
+                "index_id": index_id,
+                "market": MARKET_NAME[index_id],
+                "valid_folds": int(m.valid_folds.sum()),
+                "h1_oos_dates": h1_dates,
+                "h5_expected_oos_dates": h5_dates,
+                "sessions_after_final_test": float(m[m.end_of_market_history].sessions_after_last_test.iloc[0]),
+                "rebalance_exposed_intervals": int(m.h5_rebalance_exposed.sum()),
+                "h5_pit_forecasts_approx": round(approx_forecasts),
+                "passes_validity_gate_approx": bool(
+                    m.valid_folds.sum() >= 2 and h5_dates >= 40 and approx_forecasts >= 800
+                ),
+                "h5_block40_intervals": int(m.h5_block40_eligible.sum()),
+            }
+        )
+    return pd.DataFrame(summary), detail
+
+
+# --------------------------------------------------------- audit appendix
+def build_audit_cross_checks(
+    data: dict[str, pd.DataFrame], r3: pd.DataFrame, checks: list[dict]
+) -> pd.DataFrame:
+    """Public aggregates against counts the audit took on restricted files."""
+    inventory = data["data_inventory"].assign(name=lambda d: d.path.str.split("/").str[-1]).set_index("name").rows
+    total = r3.set_index("index_id").loc["ALL"]
+    arm_sum = int(total.pit_forecasts + total.current_forecasts + total.intersection_arm_forecasts)
+    rejections = data["rejections"]
+    feature_rejections = int(rejections[rejections.rejection_reason.eq("MISSING_FEATURES")].rows.sum())
+    target_rejections = int(rejections.rows.sum()) - feature_rejections
+    observations = int(inventory["pit_multimarket_observation_panel_v8.parquet"])
+    support = _read_json("audit/temporal_and_support_checks.json")
+    schema = data["data_schema"]
+    null_reasons = int(
+        schema[schema.path.str.endswith("fold_calendar_v8.parquet") & schema.column.eq("invalid_reason")].null_count.iloc[0]
+    )
+    s06_valid = int(data["folds"].valid_fold.astype(bool).sum())
+    boot = data["bootstrap_verification"]
+    violations = sum(int(v) for k, v in support.items() if k != "exact_common_support_pairs")
+    rows = [
+        ("seed_collapsed_predictions", "4 models x (PIT + current + intersection)", 4 * arm_sum,
+         int(inventory["pit_multimarket_predictions_seed_collapsed_v8.parquet"]), "audit/data_inventory.csv"),
+        ("seed_level_predictions", "5 seeds x seed-collapsed", 20 * arm_sum,
+         int(inventory["pit_multimarket_predictions_seed_level_v8.parquet"]), "audit/data_inventory.csv"),
+        ("matched_current_pit_pairs", "4 models x common-support pairs", 4 * int(total.common_support_pairs),
+         int(support["exact_common_support_pairs"]), "audit/temporal_and_support_checks.json"),
+        ("membership_rows", "observation rows + target-stage rejections (S05)", observations + target_rejections,
+         int(inventory["pit_membership_daily_all_arms_v8.parquet"]), "audit/data_inventory.csv"),
+        ("feature_rows", "observation rows - MISSING_FEATURES (S05)", observations - feature_rejections,
+         int(inventory["pit_multimarket_feature_panel_v8.parquet"]), "audit/data_inventory.csv"),
+        ("valid_folds", "valid folds in S06", s06_valid, null_reasons,
+         "audit/data_schema.csv (fold calendar invalid_reason nulls)"),
+        ("raw_price_rows", "sum of rows over price sources", int(data["provenance"].rows.sum()),
+         int(inventory["pit_historical_raw_ohlc_recovered_v8.parquet"]), "audit/data_inventory.csv"),
+        ("fbm_klci_pit_member_days", "FBM KLCI required PIT member-days (S04)",
+         int(data["interval_inventory"].query("index_id == 'FBM_KLCI'").required_active_member_days.sum()),
+         int(inventory["fbm_klci_membership_daily_v8.parquet"]), "audit/data_inventory.csv"),
+        ("full_support_bootstrap_rows_verified", "FULL_SUPPORT rows in S08",
+         int(data["bootstrap"].support_specification.eq("FULL_SUPPORT").sum()), int(boot.cells.min()),
+         "audit/bootstrap_verification.csv"),
+        ("temporal_or_probability_violations", "expected zero", 0, violations,
+         "audit/temporal_and_support_checks.json"),
+    ]
+    out = pd.DataFrame(rows, columns=["check", "public_derivation", "from_public_tables", "from_audit", "audit_source"])
+    out["status"] = np.where(out.from_public_tables.eq(out.from_audit), "MATCH", "MISMATCH")
+    _check(checks, "audit_cross_checks_match", bool(out.status.eq("MATCH").all()),
+           out.set_index("check").status.to_dict())
+    _check(checks, "audit_bootstrap_verification_within_tolerance",
+           bool(boot.status.eq("TOLERANCE_MATCH").all()), float(boot.max_abs_error.max()))
+    return out
+
+
 # -------------------------------------------------------------------- utils
 def _market_key(series: pd.Series) -> pd.Series:
     if series.name == "index_id":
@@ -647,11 +883,52 @@ def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
     r2_full = r2[r2.support_specification.eq("FULL_SUPPORT")]
     dec = outputs["R2_block40_decomposition"]
     r3 = outputs["R3_oos_forecasts_common_support"]
+    gate = outputs["R1_interval_gate_by_market"]
+    sources = outputs["R1_price_sources"]
+    sources = sources[sources.market.isin(["Philippines", "Malaysia"])]
+    market_boot = outputs["R2_bootstrap_market_level"]
+    h5 = outputs["R4_h5_expected_scope_by_market"]
+    audit = outputs["A_audit_cross_checks"]
+    supported = market_boot[market_boot.classification.eq("SUPPORTED_CURRENT_PIT_DIFFERENCE")]
     parts = [
         "# Reviewer diagnostics (generated)",
         "",
         "Generated by `scripts/reviewer_diagnostics.py` from public aggregate artifacts. "
         "Do not edit by hand. Interpretation: `docs/REVIEWER_DIAGNOSTICS.md`.",
+        "",
+        "## R1a. Interval data gate (PIT roster; decides the intervals of every arm)",
+        "",
+        markdown_table(
+            gate,
+            {
+                "index_id": ("Index", "str"),
+                "pit_intervals": ("PIT intervals", "int"),
+                "ready_intervals": ("Ready", "int"),
+                "not_ready_intervals": ("Not ready", "int"),
+                "required_pit_member_days": ("Required member-days", "int"),
+                "unpriced_pit_member_days_ready": ("Unpriced (ready)", "int"),
+                "unpriced_pit_member_days_not_ready": ("Unpriced (not ready)", "int"),
+                "not_ready_price_coverage_min": ("Not-ready price cov. min", "pct"),
+                "not_ready_price_coverage_max": ("Not-ready price cov. max", "pct"),
+            },
+        ),
+        "",
+        "Unpriced PIT member-days (ready + not ready) equal the PIT `MISSING_PREDICTION_RAW_OHLC` "
+        "rejections in S05 for every market.",
+        "",
+        "### Price sources, Philippines and Malaysia (`audit/raw_provenance_summary.csv`)",
+        "",
+        markdown_table(
+            sources,
+            {
+                "market": ("Market", "str"),
+                "provider": ("Provider", "str"),
+                "rows": ("Rows", "int"),
+                "securities": ("Securities", "int"),
+                "date_min": ("From", "str"),
+                "date_max": ("To", "str"),
+            },
+        ),
         "",
         "## R1. OOS forecast coverage by market and arm",
         "",
@@ -738,6 +1015,10 @@ def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
             },
         ),
         "",
+        f"Market-level cells (`R2_bootstrap_market_level.csv`): {len(supported)} of "
+        f"{int(market_boot.valid.astype(bool).sum())} valid cells are SUPPORTED, all in common support "
+        f"({', '.join(sorted(set(supported.support_specification)))}).",
+        "",
         "## R3. OOS dates, forecasts and common support by market",
         "",
         markdown_table(
@@ -752,6 +1033,41 @@ def write_summary(path: Path, outputs: dict[str, pd.DataFrame]) -> None:
                 "common_support_pairs": ("Common-support pairs", "int"),
                 "common_share_of_pit": ("Share of PIT", "pct"),
                 "common_share_of_current": ("Share of current", "pct"),
+            },
+        ),
+        "",
+        "## R4. Horizon 5: expected OOS scope (estimate from the public fold calendar)",
+        "",
+        "Same folds, rosters and interval gate; only the label changes. End-of-history dates are lost "
+        "in every arm; at internal rebalances only securities leaving the PIT roster lose dates. "
+        "Exact counts come from the h = 5 run.",
+        "",
+        markdown_table(
+            h5,
+            {
+                "index_id": ("Index", "str"),
+                "valid_folds": ("Valid folds", "int"),
+                "h1_oos_dates": ("OOS dates h=1", "int"),
+                "h5_expected_oos_dates": ("Expected OOS dates h=5", "int"),
+                "sessions_after_final_test": ("Sessions after final test", "int"),
+                "rebalance_exposed_intervals": ("Rebalance-exposed intervals", "int"),
+                "h5_pit_forecasts_approx": ("PIT forecasts h=5 (approx.)", "int"),
+                "passes_validity_gate_approx": ("Validity gate", "yesno"),
+                "h5_block40_intervals": ("Block-40 intervals", "int"),
+            },
+        ),
+        "",
+        "## Appendix A. Public tables against audit counts on restricted files",
+        "",
+        markdown_table(
+            audit,
+            {
+                "check": ("Check", "str"),
+                "public_derivation": ("Public derivation", "str"),
+                "from_public_tables": ("Public", "int"),
+                "from_audit": ("Audit", "int"),
+                "audit_source": ("Audit source", "str"),
+                "status": ("Status", "str"),
             },
         ),
         "",
@@ -778,6 +1094,23 @@ def build(output: Path) -> dict:
             r1, data["common_support"], data["market_inventory"], data, checks
         ),
     }
+    outputs["R1_interval_gate_by_market"] = build_r1_interval_gate(
+        data["interval_inventory"], data["rejections"], checks
+    )
+    outputs["R1_price_sources"] = build_r1_price_sources(data["provenance"])
+    outputs["R2_bootstrap_market_level"] = build_r2_market_level(data["bootstrap"])
+    h5_summary, h5_detail = build_r4_h5_scope(interval_rows, data["interval_inventory"], data["folds"])
+    _check(
+        checks,
+        "h5_scope_rule_reproduces_h1_oos_dates",
+        bool(h5_detail.h1_rule_reproduces_oos_dates.all() and h5_detail.sessions_method.ne("undetermined").all()),
+        int(h5_detail.h1_rule_reproduces_oos_dates.sum()),
+    )
+    outputs["R4_h5_expected_scope_by_market"] = h5_summary
+    outputs["R4_h5_expected_scope_by_interval"] = h5_detail
+    outputs["A_audit_cross_checks"] = build_audit_cross_checks(
+        data, outputs["R3_oos_forecasts_common_support"], checks
+    )
     output.mkdir(parents=True, exist_ok=True)
     for name, frame in outputs.items():
         frame.to_csv(output / f"{name}.csv", index=False)

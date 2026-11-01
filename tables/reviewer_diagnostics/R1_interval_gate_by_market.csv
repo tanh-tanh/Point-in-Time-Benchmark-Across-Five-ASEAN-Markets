@@ -1,0 +1,6 @@
+index_id,market,pit_intervals,ready_intervals,not_ready_intervals,required_pit_member_days,unpriced_pit_member_days_ready,unpriced_pit_member_days_not_ready,not_ready_price_coverage_min,not_ready_price_coverage_max,not_ready_failing_price_gate,not_ready_failing_target_gate_only
+IDX30,Indonesia,26,2,24,42990,56,11003,0.6,0.9,24,0
+SET50,Thailand,12,2,10,73050,245,6076,0.86,0.94,10,0
+VN30,Vietnam,21,2,19,77370,126,19141,0.3101092896174863,0.9333333333333332,19,0
+PSEI,Philippines,22,9,13,67710,224,7135,0.6996031746031746,0.9666666666666668,12,1
+FBM_KLCI,Malaysia,13,13,0,62460,511,0,,,0,0

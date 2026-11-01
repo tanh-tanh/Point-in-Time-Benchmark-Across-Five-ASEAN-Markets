@@ -53,6 +53,14 @@ def test_public_diagnostic_values(tmp_path):
     r3 = pd.read_csv(tmp_path / "R3_oos_forecasts_common_support.csv").set_index("index_id")
     assert r3.loc["ALL", "common_support_pairs"] == 85948
     assert r3.loc["ALL", "oos_dates"] == 3299
+    gate = pd.read_csv(tmp_path / "R1_interval_gate_by_market.csv").set_index("index_id")
+    assert gate.loc["PSEI", "ready_intervals"] == 9 and gate.loc["PSEI", "unpriced_pit_member_days_not_ready"] == 7135
+    h5 = pd.read_csv(tmp_path / "R4_h5_expected_scope_by_market.csv").set_index("index_id")
+    assert h5.h5_expected_oos_dates.to_dict() == {"IDX30": 75, "SET50": 237, "VN30": 180, "PSEI": 900, "FBM_KLCI": 1900}
+    assert h5.rebalance_exposed_intervals.to_dict() == {"IDX30": 0, "SET50": 1, "VN30": 0, "PSEI": 6, "FBM_KLCI": 4}
+    assert h5.h5_block40_intervals.loc["IDX30"] == 0
+    audit = pd.read_csv(tmp_path / "A_audit_cross_checks.csv")
+    assert len(audit) == 10 and audit.status.eq("MATCH").all()
 
 
 def _fixture():

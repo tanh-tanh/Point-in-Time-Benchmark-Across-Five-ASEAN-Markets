@@ -1,0 +1,11 @@
+check,public_derivation,from_public_tables,from_audit,audit_source,status
+seed_collapsed_predictions,4 models x (PIT + current + intersection),1139196,1139196,audit/data_inventory.csv,MATCH
+seed_level_predictions,5 seeds x seed-collapsed,5695980,5695980,audit/data_inventory.csv,MATCH
+matched_current_pit_pairs,4 models x common-support pairs,343792,343792,audit/temporal_and_support_checks.json,MATCH
+membership_rows,observation rows + target-stage rejections (S05),897141,897141,audit/data_inventory.csv,MATCH
+feature_rows,observation rows - MISSING_FEATURES (S05),819427,819427,audit/data_inventory.csv,MATCH
+valid_folds,valid folds in S06,165,165,audit/data_schema.csv (fold calendar invalid_reason nulls),MATCH
+raw_price_rows,sum of rows over price sources,604422,604422,audit/data_inventory.csv,MATCH
+fbm_klci_pit_member_days,FBM KLCI required PIT member-days (S04),62460,62460,audit/data_inventory.csv,MATCH
+full_support_bootstrap_rows_verified,FULL_SUPPORT rows in S08,76,76,audit/bootstrap_verification.csv,MATCH
+temporal_or_probability_violations,expected zero,0,0,audit/temporal_and_support_checks.json,MATCH
